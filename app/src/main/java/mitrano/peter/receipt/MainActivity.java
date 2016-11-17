@@ -8,6 +8,7 @@ import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.design.widget.FloatingActionButton;
+import android.support.v4.app.FragmentActivity;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
@@ -27,7 +28,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
+public class MainActivity extends FragmentActivity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, ResultCallback<DriveApi.DriveContentsResult> {
 
     private static final int RESOLVE_CONNECTION_REQUEST_CODE = 1;
     private static final int REQUEST_CODE_CAPTURE_IMAGE = 2;
@@ -41,21 +42,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(this);
 
 
         // setup the google drive API
-        if (mGoogleApiClient == null) {
-            mGoogleApiClient = new GoogleApiClient.Builder(this)
-                    .addApi(Drive.API)
-                    .addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this)
-                    .build();
-        }
+        mGoogleApiClient = new GoogleApiClient.Builder(this)
+                .addApi(Drive.API)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .build();
     }
 
     @Override
@@ -84,57 +81,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     public void onClick(View view) {
         startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE),
                 REQUEST_CODE_CAPTURE_IMAGE);
-        saveFileToDrive();
     }
 
-    private void saveFileToDrive() {
-        // Start by creating a new contents, and setting a callback.
-        Log.i(TAG, "Creating new contents.");
-        final Bitmap image = mBitmapToSave;
-        Drive.DriveApi.newDriveContents(mGoogleApiClient)
-                .setResultCallback(new ResultCallback<DriveApi.DriveContentsResult>() {
-
-                    @Override
-                    public void onResult(DriveApi.DriveContentsResult result) {
-                        if (!result.getStatus().isSuccess()) {
-                            Log.i(TAG, "Failed to create new contents.");
-                            return;
-                        }
-
-                        Log.i(TAG, "New contents created.");
-
-                        // Get an output stream for the contents.
-                        OutputStream outputStream = result.getDriveContents().getOutputStream();
-
-                        // Write the bitmap data from it.
-                        ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
-                        image.compress(Bitmap.CompressFormat.PNG, 100, bitmapStream);
-
-                        try {
-                            outputStream.write(bitmapStream.toByteArray());
-                        } catch (IOException e1) {
-                            Log.i(TAG, "Unable to write file contents.");
-                        }
-
-                        // Create the initial metadata - MIME type and title.
-                        // Note that the user will be able to change the title later.
-                        MetadataChangeSet metadataChangeSet = new MetadataChangeSet.Builder()
-                                .setMimeType("image/jpeg").setTitle("Android Photo.png").build();
-
-                        // Create an intent for the file chooser, and start it.
-                        IntentSender intentSender = Drive.DriveApi
-                                .newCreateFileActivityBuilder()
-                                .setInitialMetadata(metadataChangeSet)
-                                .setInitialDriveContents(result.getDriveContents())
-                                .build(mGoogleApiClient);
-                        try {
-                            startIntentSenderForResult(intentSender, REQUEST_CREATOR_CODE, null, 0, 0, 0);
-                        } catch (IntentSender.SendIntentException e) {
-                            Log.i(TAG, "Failed to launch file chooser.");
-                        }
-                    }
-                });
+    @Override
+    protected void onStart() {
+        super.onStart();
+        mGoogleApiClient.connect();
     }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        mGoogleApiClient.disconnect();
+    }
+
     @Override
     public void onConnected(@Nullable Bundle bundle) {
         Log.e(TAG, "on connected");
@@ -143,13 +103,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     @Override
     public void onConnectionSuspended(int i) {
         Log.e(TAG, "on suspended");
-    }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        Log.e(TAG, "connected?: " + mGoogleApiClient.isConnected());
-        mGoogleApiClient.connect();
     }
 
     @Override
@@ -173,6 +126,53 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     mGoogleApiClient.connect();
                 }
                 break;
+            case REQUEST_CODE_CAPTURE_IMAGE:
+                Log.i(TAG, "connected? " + mGoogleApiClient.isConnected());
+                Drive.DriveApi.newDriveContents(mGoogleApiClient).setResultCallback(this);
+        }
+    }
+
+    @Override
+    public void onResult(@NonNull DriveApi.DriveContentsResult result) {
+        // Start by creating a new contents, and setting a callback.
+        Log.i(TAG, "Creating new contents.");
+        final Bitmap image = mBitmapToSave;
+
+        if (!result.getStatus().isSuccess()) {
+            Log.i(TAG, "Failed to create new contents.");
+            return;
+        }
+
+        Log.i(TAG, "New contents created.");
+
+        // Get an output stream for the contents.
+        OutputStream outputStream = result.getDriveContents().getOutputStream();
+
+        // Write the bitmap data from it.
+        ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
+        image.compress(Bitmap.CompressFormat.PNG, 100, bitmapStream);
+
+        try {
+            outputStream.write(bitmapStream.toByteArray());
+        } catch (IOException e1) {
+            Log.i(TAG, "Unable to write file contents.");
+        }
+
+        // Create the initial metadata - MIME type and title.
+        // Note that the user will be able to change the title later.
+        MetadataChangeSet metadataChangeSet = new MetadataChangeSet.Builder()
+                .setMimeType("image/jpeg").setTitle("Android Photo.png").build();
+
+        // Create an intent for the file chooser, and start it.
+        IntentSender intentSender = Drive.DriveApi
+                .newCreateFileActivityBuilder()
+                .setInitialMetadata(metadataChangeSet)
+                .setInitialDriveContents(result.getDriveContents())
+                .build(mGoogleApiClient);
+        try {
+            startIntentSenderForResult(intentSender, REQUEST_CREATOR_CODE, null, 0, 0, 0);
+        } catch (IntentSender.SendIntentException e) {
+            Log.i(TAG, "Failed to launch file chooser.");
         }
     }
 }
