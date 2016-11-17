@@ -41,6 +41,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.w3c.dom.Text;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -54,6 +56,7 @@ public class MainActivity extends Activity
     private static final int REQUEST_CODE_CAPTURE_IMAGE = 1004;
     GoogleAccountCredential mCredential;
     ProgressDialog mProgress;
+    TextView textView;
 
     static final int REQUEST_ACCOUNT_PICKER = 1000;
     static final int REQUEST_AUTHORIZATION = 1001;
@@ -75,6 +78,8 @@ public class MainActivity extends Activity
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(this);
+
+        textView = (TextView) findViewById(R.id.text_view);
 
         mProgress = new ProgressDialog(this);
         mProgress.setMessage("Accessing Google Drive...");
@@ -100,7 +105,7 @@ public class MainActivity extends Activity
         } else if (! isDeviceOnline()) {
             Toast.makeText(this, "No network connection available.", Toast.LENGTH_LONG).show();
         } else {
-            new MakeRequestTask(mCredential).execute();
+            new MakeRequestTask(mCredential, textView).execute();
         }
     }
 
@@ -301,8 +306,10 @@ public class MainActivity extends Activity
     private class MakeRequestTask extends AsyncTask<Void, Void, List<String>> {
         private com.google.api.services.drive.Drive mService = null;
         private Exception mLastError = null;
+        private TextView textView;
 
-        public MakeRequestTask(GoogleAccountCredential credential) {
+        public MakeRequestTask(GoogleAccountCredential credential, TextView textView) {
+            this.textView = textView;
             HttpTransport transport = AndroidHttp.newCompatibleTransport();
             JsonFactory jsonFactory = JacksonFactory.getDefaultInstance();
             mService = new com.google.api.services.drive.Drive.Builder(
@@ -357,9 +364,11 @@ public class MainActivity extends Activity
             mProgress.hide();
             if (output == null || output.size() == 0) {
                 Log.w(TAG, "No results returned.");
+                textView.setText("No results returned");
             } else {
                 output.add(0, "Data retrieved using the Drive API:");
                 Log.w(TAG, TextUtils.join("\n", output));
+                textView.setText(TextUtils.join("\n", output));
             }
         }
 
@@ -377,9 +386,11 @@ public class MainActivity extends Activity
                             MainActivity.REQUEST_AUTHORIZATION);
                 } else {
                     Log.e(TAG, mLastError.getMessage());
+                    textView.setText(mLastError.getMessage());
                 }
             } else {
                 Log.w(TAG, "Request cancelled.");
+                textView.setText("Request cancelled");
             }
         }
     }
