@@ -14,7 +14,8 @@ import com.google.api.client.util.ExponentialBackOff;
 
 import com.google.api.services.drive.DriveScopes;
 
-import com.google.api.services.drive.model.*;
+import com.google.api.services.drive.model.File;
+import com.google.api.services.drive.model.FileList;
 
 import android.Manifest;
 import android.accounts.AccountManager;
@@ -26,11 +27,14 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
+import android.support.v4.content.FileProvider;
 import android.text.TextUtils;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
@@ -44,8 +48,10 @@ import android.widget.Toast;
 import org.w3c.dom.Text;
 
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 
 import pub.devrel.easypermissions.AfterPermissionGranted;
@@ -57,6 +63,7 @@ public class MainActivity extends Activity
     GoogleAccountCredential mCredential;
     ProgressDialog mProgress;
     TextView textView;
+    String mCurrentPhotoPath;
 
     static final int REQUEST_ACCOUNT_PICKER = 1000;
     static final int REQUEST_AUTHORIZATION = 1001;
@@ -158,6 +165,7 @@ public class MainActivity extends Activity
     protected void onActivityResult(
             int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        Log.e(TAG, requestCode +" "+ resultCode);
         switch(requestCode) {
             case REQUEST_GOOGLE_PLAY_SERVICES:
                 if (resultCode != RESULT_OK) {
@@ -191,8 +199,7 @@ public class MainActivity extends Activity
                 }
                 break;
             case REQUEST_CODE_CAPTURE_IMAGE:
-                Log.w(TAG, "done taking picture");
-                // how to start the drive call
+                Log.w(TAG, "Log.wtaking picture: " + mCurrentPhotoPath);
                 getResultsFromApi();
         }
     }
@@ -295,9 +302,47 @@ public class MainActivity extends Activity
 
     @Override
     public void onClick(View v) {
-        startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE),
-                REQUEST_CODE_CAPTURE_IMAGE);
+        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
+            // Create the File where the photo should go
+            java.io.File photoFile = null;
+            try {
+                photoFile = createImageFile();
+            } catch (IOException ex) {
+                // Error occurred while creating the File
+                Toast.makeText(this,
+                        "Error occured while creating the file",
+                        Toast.LENGTH_SHORT).show();
+            }
+            // Continue only if the File was successfully created
+            if (photoFile != null) {
+                Uri photoURI = FileProvider.getUriForFile(this,
+                        "mitrano.peter.receipt.fileprovider",
+                        photoFile);
+                Log.e(TAG, photoURI.toString());
+                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+                startActivityForResult(takePictureIntent, REQUEST_CODE_CAPTURE_IMAGE);
+            }
+        }
+        else {
+            Toast.makeText(this, "You need an camera app installed.", Toast.LENGTH_LONG).show();
+        }
     }
+
+    private java.io.File createImageFile() throws IOException {
+        // Create an image file name
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_.jpg";
+        java.io.File storageDir = new java.io.File(getFilesDir(), "images");
+        if (!storageDir.exists()) {
+            storageDir.mkdirs();
+        }
+
+        java.io.File imageFile = new java.io.File(storageDir, imageFileName);
+        mCurrentPhotoPath = imageFile.getAbsolutePath();
+        return imageFile;
+    }
+
 
     /**
      * An asynchronous task that handles the Drive API call.
@@ -367,8 +412,8 @@ public class MainActivity extends Activity
                 textView.setText("No results returned");
             } else {
                 output.add(0, "Data retrieved using the Drive API:");
-                Log.w(TAG, TextUtils.join("\n", output));
-                textView.setText(TextUtils.join("\n", output));
+                Log.i(TAG, TextUtils.join("", output));
+                textView.setText(TextUtils.join("", output));
             }
         }
 
