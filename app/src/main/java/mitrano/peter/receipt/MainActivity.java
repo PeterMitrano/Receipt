@@ -22,8 +22,10 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.drive.Drive;
+import com.google.android.gms.drive.DriveApi;
 import com.google.android.gms.drive.DriveFolder;
 import com.google.android.gms.drive.DriveId;
+import com.google.android.gms.drive.Metadata;
 import com.google.android.gms.drive.MetadataChangeSet;
 
 import java.io.IOException;
@@ -149,11 +151,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
                     });
         } else {
             mReceiptsFolder = DriveId.decodeFromString(drive_id).asDriveFolder();
-            if (mReceiptsFolder == null) {
-                Log.e(TAG, "no folder with that id");
-            } else {
-                fab.setEnabled(true);
-            }
+            fab.setEnabled(true);
         }
     }
 
