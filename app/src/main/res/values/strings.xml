@@ -3,4 +3,7 @@
     <string name="action_settings">Settings</string>
     <string name="preference_file_key">mitrano.peter.receipt.PREFERENCES_FILE</string>
     <string name="receipts_folder_key">receipts_folder_id</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="details_amount">details_amount</string>
 </resources>

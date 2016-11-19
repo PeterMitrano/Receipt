@@ -22,9 +22,9 @@ class DriveFileHandler implements ResultCallback<DriveFolder.DriveFileResult> {
     @Override
     public void onResult(@NonNull DriveFolder.DriveFileResult result) {
         if (!result.getStatus().isSuccess()) {
+            //TODO: better error handling
             Log.e(TAG, "Error while trying to create the file");
             return;
         }
-        Log.e(TAG, "success: " + result.getDriveFile().getDriveId().toString());
     }
 }

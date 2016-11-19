@@ -22,21 +22,23 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.drive.Drive;
-import com.google.android.gms.drive.DriveApi;
 import com.google.android.gms.drive.DriveFolder;
 import com.google.android.gms.drive.DriveId;
-import com.google.android.gms.drive.Metadata;
 import com.google.android.gms.drive.MetadataChangeSet;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+import static mitrano.peter.receipt.DetailsActivity.REQUEST_RECEIPT_DETAILS;
+import static mitrano.peter.receipt.DetailsActivity.RESULT_SAVE;
+
 public class MainActivity extends Activity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
 
     private static final int REQUEST_CODE_CAPTURE_IMAGE = 1001;
     private static final int REQUEST_CODE_RESOLUTION = 1002;
-    private static final int REQUEST_CODE_SAVE_FILE = 1003;
+    private static final String TAG = "MainActivity";
+
     private GoogleApiClient mGoogleApiClient;
     private ProgressDialog mProgress;
     private DriveFolder mReceiptsFolder;
@@ -44,7 +46,6 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
     private java.io.File mCurrentPhoto;
     private FloatingActionButton fab;
 
-    static private final String TAG = "MainActivity";
     private boolean mFoundReceiptsFolder;
 
     /**
@@ -124,7 +125,6 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
         final SharedPreferences sharedPref = this.getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
         String drive_id = sharedPref.getString(getString(R.string.receipts_folder_key), "");
 
-        Log.e(TAG, "driveid: " + drive_id);
         if (!drive_id.isEmpty()) {
             mFoundReceiptsFolder = true;
         }
@@ -176,10 +176,19 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
         super.onActivityResult(requestCode, resultCode, data);
         switch (requestCode) {
             case REQUEST_CODE_CAPTURE_IMAGE:
-                Log.w(TAG, "took picture: " + mCurrentPhoto.getName());
-                saveFileToDrive();
-            case REQUEST_CODE_SAVE_FILE:
-                Log.e(TAG, "success saving file");
+                // get the other details about the receipt
+                Intent detailsIntent = new Intent(this, DetailsActivity.class);
+                startActivityForResult(detailsIntent, REQUEST_RECEIPT_DETAILS);
+                break;
+            case REQUEST_RECEIPT_DETAILS:
+                if (resultCode == RESULT_SAVE) {
+                    String amount = data.getStringExtra(getString(R.string.details_amount));
+                    Log.e(TAG, "amount: " + amount);
+                    // finally save it all
+                    saveFileToDrive();
+                } else {
+                }
+                break;
         }
     }
 
@@ -198,7 +207,6 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
             // Continue only if the File was successfully created
             if (mCurrentPhoto != null) {
                 Uri photoURI = FileProvider.getUriForFile(this, "mitrano.peter.receipt.fileprovider", mCurrentPhoto);
-                Log.e(TAG, photoURI.toString());
                 takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
                 startActivityForResult(takePictureIntent, REQUEST_CODE_CAPTURE_IMAGE);
             }
@@ -209,7 +217,6 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
 
     private void saveFileToDrive() {
         // Start by creating a new contents, and setting a callback.
-        Log.w(TAG, "Creating new contents.");
         Drive.DriveApi.newDriveContents(mGoogleApiClient)
                 .setResultCallback(new DriveContentsHandler.DriveContentHandler(mCurrentPhoto, mReceiptsFolder, mGoogleApiClient));
     }
