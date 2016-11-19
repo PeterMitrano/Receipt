@@ -40,10 +40,13 @@ public class DriveContentsHandler {
                 Log.e(TAG, "Error while trying to create the file");
                 return;
             }
+            else if (mPhotoFile == null) {
+                Log.e(TAG, "null photo file");
+            }
 
             try {
                 OutputStream outputStream = result.getDriveContents().getOutputStream();
-                FileInputStream inputStream = new FileInputStream(mPhotoFile);
+               FileInputStream inputStream = new FileInputStream(mPhotoFile);
                 int size = inputStream.available();
                 byte b[] = new byte[size];
                 inputStream.read(b);

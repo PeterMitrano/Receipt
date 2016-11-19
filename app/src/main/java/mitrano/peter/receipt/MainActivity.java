@@ -185,7 +185,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
                     String amount = data.getStringExtra(getString(R.string.details_amount));
                     Log.e(TAG, "amount: " + amount);
                     // finally save it all
-                    saveFileToDrive();
+                    // saveFileToDrive();
                 } else {
                 }
                 break;
@@ -194,6 +194,15 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
 
     @Override
     public void onClick(View v) {
+        if (v.getId() == R.id.fab) {
+            // takePicture();
+            Intent detailsIntent = new Intent(this, DetailsActivity.class);
+            startActivityForResult(detailsIntent, REQUEST_RECEIPT_DETAILS);
+
+        }
+    }
+
+    public void takePicture() {
         Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
         if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
             // Create the File where the photo should go
