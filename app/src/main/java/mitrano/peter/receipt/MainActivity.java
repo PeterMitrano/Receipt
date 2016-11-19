@@ -223,8 +223,8 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
 
     private java.io.File createImageFile() throws IOException {
         // Create an image file name
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String imageFileName = "JPEG_" + timeStamp + "_.jpg";
+        String timeStamp = new SimpleDateFormat("yyyyMMdd").format(new Date());
+        String imageFileName =timeStamp + ".jpg";
         java.io.File storageDir = new java.io.File(getFilesDir(), "images");
         if (!storageDir.exists()) {
             storageDir.mkdirs();
@@ -261,17 +261,29 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
                 .setTitle(mCurrentPhoto.getName())
                 .setMimeType("text/plain").build();
 
-        Drive.DriveApi.getRootFolder(mGoogleApiClient)
-                .createFile(mGoogleApiClient, changeSet, result.getDriveContents())
-                .setResultCallback(new ResultCallback<DriveFolder.DriveFileResult>() {
-                    @Override
-                    public void onResult(@NonNull DriveFolder.DriveFileResult driveFileResult) {
-                        if (!driveFileResult.getStatus().isSuccess()) {
-                            Log.e(TAG, "Error while trying to create the file");
-                            return;
-                        }
-                        Log.e(TAG, "success: " + driveFileResult.getDriveFile().getDriveId().toString());
-                    }
-                });
+        IntentSender intentSender = Drive.DriveApi
+                .newCreateFileActivityBuilder()
+                .setInitialMetadata(changeSet)
+                .setInitialDriveContents(result.getDriveContents())
+                .build(mGoogleApiClient);
+        try {
+            startIntentSenderForResult(intentSender, 1, null, 0, 0, 0);
+        } catch (IntentSender.SendIntentException e) {
+            // Handle the exception
+            Log.e(TAG, "Fuck.");
+        }
+
+//        Drive.DriveApi.getRootFolder(mGoogleApiClient)
+//                .createFile(mGoogleApiClient, changeSet, result.getDriveContents())
+//                .setResultCallback(new ResultCallback<DriveFolder.DriveFileResult>() {
+//                    @Override
+//                    public void onResult(@NonNull DriveFolder.DriveFileResult driveFileResult) {
+//                        if (!driveFileResult.getStatus().isSuccess()) {
+//                            Log.e(TAG, "Error while trying to create the file");
+//                            return;
+//                        }
+//                        Log.e(TAG, "success: " + driveFileResult.getDriveFile().getDriveId().toString());
+//                    }
+//                });
     }
 }
