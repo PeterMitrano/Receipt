@@ -1,89 +1,49 @@
 package mitrano.peter.receipt;
 
-import com.google.android.gms.appindexing.Action;
-import com.google.android.gms.appindexing.AppIndex;
-import com.google.android.gms.appindexing.Thing;
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GoogleApiAvailability;
-import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.ResultCallback;
-import com.google.android.gms.drive.Drive;
-import com.google.android.gms.drive.DriveApi;
-import com.google.android.gms.drive.DriveFolder;
-import com.google.android.gms.drive.MetadataChangeSet;
-import com.google.api.client.extensions.android.http.AndroidHttp;
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
-import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException;
-import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException;
-
-import com.google.api.client.http.HttpTransport;
-import com.google.api.client.json.JsonFactory;
-import com.google.api.client.json.jackson2.JacksonFactory;
-import com.google.api.client.util.ExponentialBackOff;
-
-import com.google.api.services.drive.DriveScopes;
-
-import com.google.api.services.drive.model.File;
-import com.google.api.services.drive.model.FileList;
-
-import android.Manifest;
-import android.accounts.AccountManager;
 import android.app.Activity;
-import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.SharedPreferences;
-import android.graphics.Bitmap;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
-import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
 import android.support.v4.content.FileProvider;
-import android.text.TextUtils;
-import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.w3c.dom.Text;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.drive.Drive;
+import com.google.android.gms.drive.DriveFolder;
+import com.google.android.gms.drive.DriveId;
+import com.google.android.gms.drive.MetadataChangeSet;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Date;
-import java.util.List;
 
-import pub.devrel.easypermissions.AfterPermissionGranted;
-import pub.devrel.easypermissions.EasyPermissions;
-
-public class MainActivity extends Activity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, ResultCallback<DriveApi.DriveContentsResult> {
+public class MainActivity extends Activity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
 
     private static final int REQUEST_CODE_CAPTURE_IMAGE = 1001;
-    private static final int REQUEST_CODE_CREATOR = 1000;
     private static final int REQUEST_CODE_RESOLUTION = 1002;
+    private static final int REQUEST_CODE_SAVE_FILE = 1003;
     private GoogleApiClient mGoogleApiClient;
     private ProgressDialog mProgress;
-    private TextView textView;
+    private DriveFolder mReceiptsFolder;
+    private TextView mTextView;
     private java.io.File mCurrentPhoto;
-    private ResultCallback<DriveApi.DriveContentsResult> mContentsCallback;
+    private FloatingActionButton fab;
 
     static private final String TAG = "MainActivity";
+    private boolean mFoundReceiptsFolder;
 
     /**
      * Create the main activity.
@@ -95,10 +55,11 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
+        fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(this);
+        fab.setEnabled(false);
 
-        textView = (TextView) findViewById(R.id.text_view);
+        mTextView = (TextView) findViewById(R.id.text_view);
 
         mProgress = new ProgressDialog(this);
         mProgress.setMessage("Accessing Google Drive...");
@@ -157,6 +118,43 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
     @Override
     public void onConnected(Bundle connectionHint) {
         Log.w(TAG, "API client connected.");
+
+        final SharedPreferences sharedPref = this.getSharedPreferences(getString(R.string.preference_file_key), Context.MODE_PRIVATE);
+        String drive_id = sharedPref.getString(getString(R.string.receipts_folder_key), "");
+
+        Log.e(TAG, "driveid: " + drive_id);
+        if (!drive_id.isEmpty()) {
+            mFoundReceiptsFolder = true;
+        }
+
+        if (!mFoundReceiptsFolder) {
+            MetadataChangeSet changeSet = new MetadataChangeSet.Builder()
+                    .setTitle("Receipts").build();
+
+            Drive.DriveApi.getRootFolder(mGoogleApiClient)
+                    .createFolder(mGoogleApiClient, changeSet)
+                    .setResultCallback(new ResultCallback<DriveFolder.DriveFolderResult>() {
+                        @Override
+                        public void onResult(@NonNull DriveFolder.DriveFolderResult driveFolderResult) {
+                            if (driveFolderResult.getStatus().isSuccess()) {
+                                fab.setEnabled(true);
+                                mReceiptsFolder = driveFolderResult.getDriveFolder();
+                                SharedPreferences.Editor editor = sharedPref.edit();
+                                editor.putString(getString(R.string.receipts_folder_key), mReceiptsFolder.getDriveId().toString());
+                                editor.commit();
+                            } else {
+                                Log.e(TAG, "Couldn't create Receipts folder");
+                            }
+                        }
+                    });
+        } else {
+            mReceiptsFolder = DriveId.decodeFromString(drive_id).asDriveFolder();
+            if (mReceiptsFolder == null) {
+                Log.e(TAG, "no folder with that id");
+            } else {
+                fab.setEnabled(true);
+            }
+        }
     }
 
     @Override
@@ -182,12 +180,8 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
             case REQUEST_CODE_CAPTURE_IMAGE:
                 Log.w(TAG, "took picture: " + mCurrentPhoto.getName());
                 saveFileToDrive();
-            case REQUEST_CODE_CREATOR:
-                // Called after a file is saved to Drive.
-                if (resultCode == RESULT_OK) {
-                    Log.e(TAG, "Image successfully saved.");
-                }
-                break;
+            case REQUEST_CODE_SAVE_FILE:
+                Log.e(TAG, "success saving file");
         }
     }
 
@@ -218,13 +212,14 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
     private void saveFileToDrive() {
         // Start by creating a new contents, and setting a callback.
         Log.w(TAG, "Creating new contents.");
-        Drive.DriveApi.newDriveContents(mGoogleApiClient).setResultCallback(this);
+        Drive.DriveApi.newDriveContents(mGoogleApiClient)
+                .setResultCallback(new DriveContentsHandler.DriveContentHandler(mCurrentPhoto, mReceiptsFolder, mGoogleApiClient));
     }
 
     private java.io.File createImageFile() throws IOException {
         // Create an image file name
         String timeStamp = new SimpleDateFormat("yyyyMMdd").format(new Date());
-        String imageFileName =timeStamp + ".jpg";
+        String imageFileName = timeStamp + ".jpg";
         java.io.File storageDir = new java.io.File(getFilesDir(), "images");
         if (!storageDir.exists()) {
             storageDir.mkdirs();
@@ -235,55 +230,4 @@ public class MainActivity extends Activity implements View.OnClickListener, Goog
         return imageFile;
     }
 
-    @Override
-    public void onResult(@NonNull DriveApi.DriveContentsResult result) {
-        if (!result.getStatus().isSuccess()) {
-            Log.e(TAG, "Error while trying to create the file");
-            return;
-        }
-
-        try {
-            OutputStream outputStream = result.getDriveContents().getOutputStream();
-            FileInputStream inputStream = new FileInputStream(mCurrentPhoto);
-            int size = inputStream.available();
-            byte b[] = new byte[size];
-            inputStream.read(b);
-            outputStream.write(b);
-        } catch (FileNotFoundException fnfe) {
-            Log.w(TAG, "Unable to open FileInputStream");
-            fnfe.printStackTrace();
-        } catch (IOException ioe) {
-            Log.w(TAG, "Unable to write file contents.");
-            ioe.printStackTrace();
-        }
-
-        MetadataChangeSet changeSet = new MetadataChangeSet.Builder()
-                .setTitle(mCurrentPhoto.getName())
-                .setMimeType("text/plain").build();
-
-        IntentSender intentSender = Drive.DriveApi
-                .newCreateFileActivityBuilder()
-                .setInitialMetadata(changeSet)
-                .setInitialDriveContents(result.getDriveContents())
-                .build(mGoogleApiClient);
-        try {
-            startIntentSenderForResult(intentSender, 1, null, 0, 0, 0);
-        } catch (IntentSender.SendIntentException e) {
-            // Handle the exception
-            Log.e(TAG, "Fuck.");
-        }
-
-//        Drive.DriveApi.getRootFolder(mGoogleApiClient)
-//                .createFile(mGoogleApiClient, changeSet, result.getDriveContents())
-//                .setResultCallback(new ResultCallback<DriveFolder.DriveFileResult>() {
-//                    @Override
-//                    public void onResult(@NonNull DriveFolder.DriveFileResult driveFileResult) {
-//                        if (!driveFileResult.getStatus().isSuccess()) {
-//                            Log.e(TAG, "Error while trying to create the file");
-//                            return;
-//                        }
-//                        Log.e(TAG, "success: " + driveFileResult.getDriveFile().getDriveId().toString());
-//                    }
-//                });
-    }
 }
