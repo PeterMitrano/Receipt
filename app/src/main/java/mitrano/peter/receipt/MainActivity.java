@@ -1,7 +1,16 @@
 package mitrano.peter.receipt;
 
+import com.google.android.gms.appindexing.Action;
+import com.google.android.gms.appindexing.AppIndex;
+import com.google.android.gms.appindexing.Thing;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.drive.Drive;
+import com.google.android.gms.drive.DriveApi;
+import com.google.android.gms.drive.DriveFolder;
+import com.google.android.gms.drive.MetadataChangeSet;
 import com.google.api.client.extensions.android.http.AndroidHttp;
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
 import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException;
@@ -24,7 +33,9 @@ import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
@@ -47,7 +58,11 @@ import android.widget.Toast;
 
 import org.w3c.dom.Text;
 
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -57,25 +72,22 @@ import java.util.List;
 import pub.devrel.easypermissions.AfterPermissionGranted;
 import pub.devrel.easypermissions.EasyPermissions;
 
-public class MainActivity extends Activity
-        implements EasyPermissions.PermissionCallbacks, View.OnClickListener {
-    private static final int REQUEST_CODE_CAPTURE_IMAGE = 1004;
-    GoogleAccountCredential mCredential;
-    ProgressDialog mProgress;
-    TextView textView;
-    String mCurrentPhotoPath;
+public class MainActivity extends Activity implements View.OnClickListener, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, ResultCallback<DriveApi.DriveContentsResult> {
 
-    static final int REQUEST_ACCOUNT_PICKER = 1000;
-    static final int REQUEST_AUTHORIZATION = 1001;
+    private static final int REQUEST_CODE_CAPTURE_IMAGE = 1001;
+    private static final int REQUEST_CODE_CREATOR = 1000;
+    private static final int REQUEST_CODE_RESOLUTION = 1002;
+    private GoogleApiClient mGoogleApiClient;
+    private ProgressDialog mProgress;
+    private TextView textView;
+    private java.io.File mCurrentPhoto;
+    private ResultCallback<DriveApi.DriveContentsResult> mContentsCallback;
+
     static private final String TAG = "MainActivity";
-    static final int REQUEST_GOOGLE_PLAY_SERVICES = 1002;
-    static final int REQUEST_PERMISSION_GET_ACCOUNTS = 1003;
-
-    private static final String PREF_ACCOUNT_NAME = "accountName";
-    private static final String[] SCOPES = { DriveScopes.DRIVE_METADATA_READONLY };
 
     /**
      * Create the main activity.
+     *
      * @param savedInstanceState previously saved instance data.
      */
     @Override
@@ -90,214 +102,93 @@ public class MainActivity extends Activity
 
         mProgress = new ProgressDialog(this);
         mProgress.setMessage("Accessing Google Drive...");
-
-        // Initialize credentials and service object.
-        mCredential = GoogleAccountCredential.usingOAuth2(
-                getApplicationContext(), Arrays.asList(SCOPES))
-                .setBackOff(new ExponentialBackOff());
     }
 
-    /**
-     * Attempt to call the API, after verifying that all the preconditions are
-     * satisfied. The preconditions are: Google Play Services installed, an
-     * account was selected and the device currently has online access. If any
-     * of the preconditions are not satisfied, the app will prompt the user as
-     * appropriate.
-     */
-    private void getResultsFromApi() {
-        if (! isGooglePlayServicesAvailable()) {
-            acquireGooglePlayServices();
-        } else if (mCredential.getSelectedAccountName() == null) {
-            chooseAccount();
-        } else if (! isDeviceOnline()) {
-            Toast.makeText(this, "No network connection available.", Toast.LENGTH_LONG).show();
-        } else {
-            new MakeRequestTask(mCredential, textView).execute();
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mGoogleApiClient == null) {
+            // Create the API client and bind it to an instance variable.
+            // We use this instance as the callback for connection and connection
+            // failures.
+            // Since no account name is passed, the user is prompted to choose.
+            mGoogleApiClient = new GoogleApiClient.Builder(this)
+                    .addApi(Drive.API)
+                    .addScope(Drive.SCOPE_FILE)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .build();
+        }
+        // Connect the client. Once connected, the camera is launched.
+        mGoogleApiClient.connect();
+    }
+
+    @Override
+    protected void onPause() {
+        if (mGoogleApiClient != null) {
+            mGoogleApiClient.disconnect();
+        }
+        super.onPause();
+    }
+
+
+    @Override
+    public void onConnectionFailed(ConnectionResult result) {
+        // Called whenever the API client fails to connect.
+        Log.w(TAG, "GoogleApiClient connection failed: " + result.toString());
+        if (!result.hasResolution()) {
+            // show the localized error dialog.
+            GoogleApiAvailability.getInstance().getErrorDialog(this, result.getErrorCode(), 0).show();
+            return;
+        }
+
+        // The failure has a resolution. Resolve it.
+        // Called typically when the app is not yet authorized, and an
+        // authorization
+        // dialog is displayed to the user.
+        try {
+            result.startResolutionForResult(this, REQUEST_CODE_RESOLUTION);
+        } catch (IntentSender.SendIntentException e) {
+            Log.e(TAG, "Exception while starting resolution activity", e);
         }
     }
 
-    /**
-     * Attempts to set the account used with the API credentials. If an account
-     * name was previously saved it will use that one; otherwise an account
-     * picker dialog will be shown to the user. Note that the setting the
-     * account to use with the credentials object requires the app to have the
-     * GET_ACCOUNTS permission, which is requested here if it is not already
-     * present. The AfterPermissionGranted annotation indicates that this
-     * function will be rerun automatically whenever the GET_ACCOUNTS permission
-     * is granted.
-     */
-    @AfterPermissionGranted(REQUEST_PERMISSION_GET_ACCOUNTS)
-    private void chooseAccount() {
-        if (EasyPermissions.hasPermissions(
-                this, Manifest.permission.GET_ACCOUNTS)) {
-            String accountName = getPreferences(Context.MODE_PRIVATE)
-                    .getString(PREF_ACCOUNT_NAME, null);
-            if (accountName != null) {
-                mCredential.setSelectedAccountName(accountName);
-                getResultsFromApi();
-            } else {
-                // Start a dialog from which the user can choose an account
-                startActivityForResult(
-                        mCredential.newChooseAccountIntent(),
-                        REQUEST_ACCOUNT_PICKER);
-            }
-        } else {
-            // Request the GET_ACCOUNTS permission via a user dialog
-            EasyPermissions.requestPermissions(
-                    this,
-                    "This app needs to access your Google account (via Contacts).",
-                    REQUEST_PERMISSION_GET_ACCOUNTS,
-                    Manifest.permission.GET_ACCOUNTS);
-        }
+    @Override
+    public void onConnected(Bundle connectionHint) {
+        Log.w(TAG, "API client connected.");
+    }
+
+    @Override
+    public void onConnectionSuspended(int cause) {
+        Log.w(TAG, "GoogleApiClient connection suspended");
     }
 
     /**
      * Called when an activity launched here (specifically, AccountPicker
      * and authorization) exits, giving you the requestCode you started it with,
      * the resultCode it returned, and any additional data from it.
+     *
      * @param requestCode code indicating which activity result is incoming.
-     * @param resultCode code indicating the result of the incoming
-     *     activity result.
-     * @param data Intent (containing result data) returned by incoming
-     *     activity result.
+     * @param resultCode  code indicating the result of the incoming
+     *                    activity result.
+     * @param data        Intent (containing result data) returned by incoming
+     *                    activity result.
      */
     @Override
-    protected void onActivityResult(
-            int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        Log.e(TAG, requestCode +" "+ resultCode);
-        switch(requestCode) {
-            case REQUEST_GOOGLE_PLAY_SERVICES:
-                if (resultCode != RESULT_OK) {
-                    Toast.makeText(this,
-                            "This app requires Google Play Services. Please install " +
-                                    "Google Play Services on your device and relaunch this app.",
-                            Toast.LENGTH_LONG).show();
-                } else {
-                    getResultsFromApi();
-                }
-                break;
-            case REQUEST_ACCOUNT_PICKER:
-                if (resultCode == RESULT_OK && data != null &&
-                        data.getExtras() != null) {
-                    String accountName =
-                            data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
-                    if (accountName != null) {
-                        SharedPreferences settings =
-                                getPreferences(Context.MODE_PRIVATE);
-                        SharedPreferences.Editor editor = settings.edit();
-                        editor.putString(PREF_ACCOUNT_NAME, accountName);
-                        editor.apply();
-                        mCredential.setSelectedAccountName(accountName);
-                        getResultsFromApi();
-                    }
-                }
-                break;
-            case REQUEST_AUTHORIZATION:
-                if (resultCode == RESULT_OK) {
-                    getResultsFromApi();
-                }
-                break;
+        switch (requestCode) {
             case REQUEST_CODE_CAPTURE_IMAGE:
-                Log.w(TAG, "Log.wtaking picture: " + mCurrentPhotoPath);
-                getResultsFromApi();
+                Log.w(TAG, "took picture: " + mCurrentPhoto.getName());
+                saveFileToDrive();
+            case REQUEST_CODE_CREATOR:
+                // Called after a file is saved to Drive.
+                if (resultCode == RESULT_OK) {
+                    Log.e(TAG, "Image successfully saved.");
+                }
+                break;
         }
-    }
-
-    /**
-     * Respond to requests for permissions at runtime for API 23 and above.
-     * @param requestCode The request code passed in
-     *     requestPermissions(android.app.Activity, String, int, String[])
-     * @param permissions The requested permissions. Never null.
-     * @param grantResults The grant results for the corresponding permissions
-     *     which is either PERMISSION_GRANTED or PERMISSION_DENIED. Never null.
-     */
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        EasyPermissions.onRequestPermissionsResult(
-                requestCode, permissions, grantResults, this);
-    }
-
-    /**
-     * Callback for when a permission is granted using the EasyPermissions
-     * library.
-     * @param requestCode The request code associated with the requested
-     *         permission
-     * @param list The requested permission list. Never null.
-     */
-    @Override
-    public void onPermissionsGranted(int requestCode, List<String> list) {
-        // Do nothing.
-    }
-
-    /**
-     * Callback for when a permission is denied using the EasyPermissions
-     * library.
-     * @param requestCode The request code associated with the requested
-     *         permission
-     * @param list The requested permission list. Never null.
-     */
-    @Override
-    public void onPermissionsDenied(int requestCode, List<String> list) {
-        // Do nothing.
-    }
-
-    /**
-     * Checks whether the device currently has a network connection.
-     * @return true if the device has a network connection, false otherwise.
-     */
-    private boolean isDeviceOnline() {
-        ConnectivityManager connMgr =
-                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo networkInfo = connMgr.getActiveNetworkInfo();
-        return (networkInfo != null && networkInfo.isConnected());
-    }
-
-    /**
-     * Check that Google Play services APK is installed and up to date.
-     * @return true if Google Play Services is available and up to
-     *     date on this device; false otherwise.
-     */
-    private boolean isGooglePlayServicesAvailable() {
-        GoogleApiAvailability apiAvailability =
-                GoogleApiAvailability.getInstance();
-        final int connectionStatusCode =
-                apiAvailability.isGooglePlayServicesAvailable(this);
-        return connectionStatusCode == ConnectionResult.SUCCESS;
-    }
-
-    /**
-     * Attempt to resolve a missing, out-of-date, invalid or disabled Google
-     * Play Services installation via a user dialog, if possible.
-     */
-    private void acquireGooglePlayServices() {
-        GoogleApiAvailability apiAvailability =
-                GoogleApiAvailability.getInstance();
-        final int connectionStatusCode =
-                apiAvailability.isGooglePlayServicesAvailable(this);
-        if (apiAvailability.isUserResolvableError(connectionStatusCode)) {
-            showGooglePlayServicesAvailabilityErrorDialog(connectionStatusCode);
-        }
-    }
-
-
-    /**
-     * Display an error dialog showing that Google Play Services is missing
-     * or out of date.
-     * @param connectionStatusCode code describing the presence (or lack of)
-     *     Google Play Services on this device.
-     */
-    void showGooglePlayServicesAvailabilityErrorDialog(
-            final int connectionStatusCode) {
-        GoogleApiAvailability apiAvailability = GoogleApiAvailability.getInstance();
-        Dialog dialog = apiAvailability.getErrorDialog(
-                MainActivity.this,
-                connectionStatusCode,
-                REQUEST_GOOGLE_PLAY_SERVICES);
-        dialog.show();
     }
 
     @Override
@@ -305,28 +196,29 @@ public class MainActivity extends Activity
         Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
         if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
             // Create the File where the photo should go
-            java.io.File photoFile = null;
             try {
-                photoFile = createImageFile();
+                createImageFile();
             } catch (IOException ex) {
                 // Error occurred while creating the File
-                Toast.makeText(this,
-                        "Error occured while creating the file",
-                        Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Error occured while creating the file", Toast.LENGTH_SHORT).show();
             }
+
             // Continue only if the File was successfully created
-            if (photoFile != null) {
-                Uri photoURI = FileProvider.getUriForFile(this,
-                        "mitrano.peter.receipt.fileprovider",
-                        photoFile);
+            if (mCurrentPhoto != null) {
+                Uri photoURI = FileProvider.getUriForFile(this, "mitrano.peter.receipt.fileprovider", mCurrentPhoto);
                 Log.e(TAG, photoURI.toString());
                 takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
                 startActivityForResult(takePictureIntent, REQUEST_CODE_CAPTURE_IMAGE);
             }
-        }
-        else {
+        } else {
             Toast.makeText(this, "You need an camera app installed.", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void saveFileToDrive() {
+        // Start by creating a new contents, and setting a callback.
+        Log.w(TAG, "Creating new contents.");
+        Drive.DriveApi.newDriveContents(mGoogleApiClient).setResultCallback(this);
     }
 
     private java.io.File createImageFile() throws IOException {
@@ -339,104 +231,47 @@ public class MainActivity extends Activity
         }
 
         java.io.File imageFile = new java.io.File(storageDir, imageFileName);
-        mCurrentPhotoPath = imageFile.getAbsolutePath();
+        mCurrentPhoto = imageFile;
         return imageFile;
     }
 
-
-    /**
-     * An asynchronous task that handles the Drive API call.
-     * Placing the API calls in their own task ensures the UI stays responsive.
-     */
-    private class MakeRequestTask extends AsyncTask<Void, Void, List<String>> {
-        private com.google.api.services.drive.Drive mService = null;
-        private Exception mLastError = null;
-        private TextView textView;
-
-        public MakeRequestTask(GoogleAccountCredential credential, TextView textView) {
-            this.textView = textView;
-            HttpTransport transport = AndroidHttp.newCompatibleTransport();
-            JsonFactory jsonFactory = JacksonFactory.getDefaultInstance();
-            mService = new com.google.api.services.drive.Drive.Builder(
-                    transport, jsonFactory, credential)
-                    .setApplicationName("Drive API Android Quickstart")
-                    .build();
+    @Override
+    public void onResult(@NonNull DriveApi.DriveContentsResult result) {
+        if (!result.getStatus().isSuccess()) {
+            Log.e(TAG, "Error while trying to create the file");
+            return;
         }
 
-        /**
-         * Background task to call Drive API.
-         * @param params no parameters needed for this task.
-         */
-        @Override
-        protected List<String> doInBackground(Void... params) {
-            try {
-                return getDataFromApi();
-            } catch (Exception e) {
-                mLastError = e;
-                cancel(true);
-                return null;
-            }
+        try {
+            OutputStream outputStream = result.getDriveContents().getOutputStream();
+            FileInputStream inputStream = new FileInputStream(mCurrentPhoto);
+            int size = inputStream.available();
+            byte b[] = new byte[size];
+            inputStream.read(b);
+            outputStream.write(b);
+        } catch (FileNotFoundException fnfe) {
+            Log.w(TAG, "Unable to open FileInputStream");
+            fnfe.printStackTrace();
+        } catch (IOException ioe) {
+            Log.w(TAG, "Unable to write file contents.");
+            ioe.printStackTrace();
         }
 
-        /**
-         * Fetch a list of up to 10 file names and IDs.
-         * @return List of Strings describing files, or an empty list if no files
-         *         found.
-         * @throws IOException
-         */
-        private List<String> getDataFromApi() throws IOException {
-            // Get a list of up to 10 files.
-            List<String> fileInfo = new ArrayList<String>();
-            FileList result = mService.files().list().execute();
-            List<File> files = result.getFiles();
-            if (files != null) {
-                for (File file : files) {
-                    fileInfo.add(String.format("%s (%s)\n",
-                            file.getName(), file.getId()));
-                }
-            }
-            return fileInfo;
-        }
+        MetadataChangeSet changeSet = new MetadataChangeSet.Builder()
+                .setTitle(mCurrentPhoto.getName())
+                .setMimeType("text/plain").build();
 
-
-        @Override
-        protected void onPreExecute() {
-            mProgress.show();
-        }
-
-        @Override
-        protected void onPostExecute(List<String> output) {
-            mProgress.hide();
-            if (output == null || output.size() == 0) {
-                Log.w(TAG, "No results returned.");
-                textView.setText("No results returned");
-            } else {
-                output.add(0, "Data retrieved using the Drive API:");
-                Log.i(TAG, TextUtils.join("", output));
-                textView.setText(TextUtils.join("", output));
-            }
-        }
-
-        @Override
-        protected void onCancelled() {
-            mProgress.hide();
-            if (mLastError != null) {
-                if (mLastError instanceof GooglePlayServicesAvailabilityIOException) {
-                    showGooglePlayServicesAvailabilityErrorDialog(
-                            ((GooglePlayServicesAvailabilityIOException) mLastError)
-                                    .getConnectionStatusCode());
-                } else if (mLastError instanceof UserRecoverableAuthIOException) {
-                    startActivityForResult(
-                            ((UserRecoverableAuthIOException) mLastError).getIntent(),
-                            MainActivity.REQUEST_AUTHORIZATION);
-                } else {
-                    Log.e(TAG, mLastError.getMessage());
-                    textView.setText(mLastError.getMessage());
-                }
-            } else {
-                Log.w(TAG, "Request cancelled.");
-                textView.setText("Request cancelled");
-            }
-        }
+        Drive.DriveApi.getRootFolder(mGoogleApiClient)
+                .createFile(mGoogleApiClient, changeSet, result.getDriveContents())
+                .setResultCallback(new ResultCallback<DriveFolder.DriveFileResult>() {
+                    @Override
+                    public void onResult(@NonNull DriveFolder.DriveFileResult driveFileResult) {
+                        if (!driveFileResult.getStatus().isSuccess()) {
+                            Log.e(TAG, "Error while trying to create the file");
+                            return;
+                        }
+                        Log.e(TAG, "success: " + driveFileResult.getDriveFile().getDriveId().toString());
+                    }
+                });
     }
 }
